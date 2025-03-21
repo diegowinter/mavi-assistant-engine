@@ -5,58 +5,81 @@ import asyncio.subprocess
 import pyaudio
 
 from led_control import (
-    start_led_task, start_serial_communication, stop_led_task, turn_listening_led, turn_thinking_led
+    start_led_task,
+    start_serial_communication,
+    stop_led_task,
+    turn_listening_led,
+    turn_thinking_led
 )
 from utils import build_wav_header
+from wake_word import wait_wake_word
 
-# Evento para controlar a captação: inicialmente, habilitado.
+# Eventos globais
 capture_enabled = asyncio.Event()
 capture_enabled.set()
 
+restart_event = asyncio.Event()
+start_timeout_event = asyncio.Event()
+cancel_timeout_event = asyncio.Event()
+
+
+async def timeout_handler(websocket, ser):
+    print("[INFO] Iniciando timer de inatividade.")
+    while True:
+        await start_timeout_event.wait()
+        start_timeout_event.clear()
+        cancel_timeout_event.clear()
+
+        try:
+            await asyncio.wait_for(cancel_timeout_event.wait(), timeout=10)
+            print("[INFO] Timeout cancelado a tempo.")
+        except asyncio.TimeoutError:
+            if capture_enabled.is_set():
+                print("[TIMEOUT] Nenhuma atividade em 10s.")
+                capture_enabled.clear()
+                await turn_thinking_led(ser)
+                await websocket.send(json.dumps({"type": "stop"}))
+                restart_event.set()
+                return
+
+
 async def play_audio_round(websocket, ser):
-    """
-    Processa uma rodada de áudio:
-    - Aguarda a primeira mensagem vinda do websocket.
-    - Se for um chunk de áudio (bytes), desabilita a captação.
-    - Enquanto receber chunks (bytes), envia para o ffplay.
-    - Ao receber uma mensagem de texto (detalhes da rodada), encerra a rodada.
-    - Após a reprodução, reabilita a captação.
-    """
     try:
-        # Aguarda a primeira mensagem da rodada
         websocket_msg = await websocket.recv()
     except websockets.exceptions.ConnectionClosed:
-        return
+        print("[INFO] WebSocket fechado — encerrando play_audio_round.")
+        return False
 
     if not isinstance(websocket_msg, bytes):
-        # Se a primeira mensagem for texto, não processa rodada e retorna
-        print("Mensagem de detalhes recebida (sem reprodução):", websocket_msg)
+        print("Mensagem recebida:", websocket_msg)
         transcription_msg = json.loads(websocket_msg)
+
+        if "recognizing" in transcription_msg:
+            cancel_timeout_event.set()
+
         if "recognized" in transcription_msg:
             print("[INFO] Parei de ouvir o microfone.")
             capture_enabled.clear()
             await turn_thinking_led(ser)
-            # await turn_speaking_led(ser)
-        return
+        return True
 
     # Inicia o ffplay para reproduzir o áudio desta rodada
     process = await asyncio.create_subprocess_exec(
         'ffplay', '-nodisp', '-autoexit', '-i', 'pipe:0', '-loglevel', 'quiet',
         stdin=asyncio.subprocess.PIPE
     )
-    
 
-    # Envia o primeiro chunk recebido
     process.stdin.write(websocket_msg)
     await start_led_task(ser)
     await process.stdin.drain()
 
-    # Continua lendo até receber uma mensagem de texto (detalhes da rodada)
     while True:
         try:
             msg = await websocket.recv()
         except websockets.exceptions.ConnectionClosed:
+            print("[INFO] WebSocket fechado — encerrando reprodução.")
             break
+
         if isinstance(msg, bytes):
             process.stdin.write(msg)
             await process.stdin.drain()
@@ -67,32 +90,25 @@ async def play_audio_round(websocket, ser):
     process.stdin.close()
     await process.wait()
 
-    # Reabilita a captação após a rodada
     capture_enabled.set()
     print("[INFO] Voltei a ouvir o microfone.")
+    start_timeout_event.set()
     await stop_led_task(ser)
-    # await turn_listening_led(ser)
+    return True
 
 
 async def play_audio_stream(websocket, ser):
-    """
-    Processa continuamente rodadas de áudio.
-    """
     while True:
-        await play_audio_round(websocket, ser)
+        continuar = await play_audio_round(websocket, ser)
+        if not continuar:
+            break
 
 
 async def send_audio_chunks(websocket):
-    """
-    Captura áudio do microfone e envia chunks de 100ms.
-    Enquanto a captação estiver desabilitada (durante a reprodução de uma
-    rodada), os dados são lidos e descartados.
-    Na primeira mensagem de cada rodada, envia o cabeçalho WAV.
-    """
     RATE = 44100
     CHANNELS = 1
     FORMAT = pyaudio.paInt16
-    CHUNK = int(RATE * 0.1)  # 100ms de áudio
+    CHUNK = int(RATE * 0.1)
     BITS_PER_SAMPLE = 16
 
     audio_interface = pyaudio.PyAudio()
@@ -104,16 +120,14 @@ async def send_audio_chunks(websocket):
         frames_per_buffer=CHUNK
     )
     first_chunk = True
+
     try:
         while True:
-            # Lê 100ms do áudio do microfone (em thread separada para não 
-            # bloquear)
             data = await asyncio.to_thread(stream.read, CHUNK, False)
             if not capture_enabled.is_set():
-                # Durante a reprodução, descarta os dados lidos para não 
-                # acumular
                 continue
 
+            # print("[INFO] Enviando áudio...")	
             if first_chunk:
                 header = build_wav_header(CHANNELS, RATE, BITS_PER_SAMPLE)
                 message = header + data
@@ -122,6 +136,8 @@ async def send_audio_chunks(websocket):
                 message = data
 
             await websocket.send(message)
+    except websockets.exceptions.ConnectionClosed:
+        print("[INFO] WebSocket fechado — send_audio_chunks encerrando.")
     except Exception as e:
         print("Erro ao enviar áudio:", e)
     finally:
@@ -129,39 +145,46 @@ async def send_audio_chunks(websocket):
         stream.close()
         audio_interface.terminate()
 
+
 async def text_to_speech_ws_streaming():
-    """
-    Conecta ao websocket, inicia a captação e a reprodução em rodadas.
-    Enquanto uma rodada (áudio a ser reproduzido) estiver ativa, a captação é
-    desabilitada; quando a rodada termina (ao receber a mensagem de detalhes),
-    a captação é retomada.
-    """
-    # Inicializa a comunicação serial
+    restart_event.clear()
+    
     ser = await start_serial_communication()
-    
-    if (ser is None):
-        print(
-            "[ERROR] Erro ao inicializar a comunicação serial. A execução "
-            "será interrompida."
-        )
-        return
-    
+    if ser is None:
+        print("[ERROR] Erro ao inicializar a comunicação serial.")
+        # return
+
     uri = (
         "wss://datalake-chat-dev.brazilsouth.cloudapp.azure.com"
         "/api-assistant/ws/conversation"
         "?doctor_id=205&language=pt-BR&output_format=mp3_44100"
     )
-    
+
+    await wait_wake_word()
+    start_timeout_event.set()
+
     async with websockets.connect(uri) as websocket:
-        # Inicia duas tarefas em paralelo: envio do áudio e reprodução de 
-        # rodadas
+        print("[INFO] Conectado ao websocket.")
+        capture_enabled.set()
         await turn_listening_led(ser)
-        
+
         audio_send_task = asyncio.create_task(send_audio_chunks(websocket))
-        audio_play_task = asyncio.create_task(
-            play_audio_stream(websocket, ser)
+        audio_play_task = asyncio.create_task(play_audio_stream(websocket, ser))
+        timeout_task = asyncio.create_task(timeout_handler(websocket, ser))
+
+        done, pending = await asyncio.wait(
+            [audio_send_task, audio_play_task, timeout_task],
+            return_when=asyncio.FIRST_COMPLETED
         )
-        await asyncio.gather(audio_send_task, audio_play_task)
+
+        print("[INFO] Encerrando conexão com o websocket.")
+
+        for task in pending:
+            task.cancel()
+
+    if restart_event.is_set():
+        await text_to_speech_ws_streaming()
+
 
 if __name__ == "__main__":
     asyncio.run(text_to_speech_ws_streaming())

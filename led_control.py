@@ -53,10 +53,16 @@ async def turn_listening_led(ser):
     print("[INFO] Sinal de microfone ativo (VERDE) enviado.")
 
 
+async def turn_inactivity_led(ser):
+    vermelho = b'VERMELHO:50\n'
+    ser.write(vermelho)
+    print("[INFO] Sinal de inatividade (VERMELHO) enviado.")
+
+
 async def turn_thinking_led(ser):
     vermelho = b'RODAR:VERMELHO:255\n'
     ser.write(vermelho)
-    print("[INFO] Sinal de CARREGANDO (VERMELHO) enviado.")
+    print("[INFO] Sinal de processamento (VERMELHO) enviado.")
 
 
 async def turn_speaking_led(ser):
