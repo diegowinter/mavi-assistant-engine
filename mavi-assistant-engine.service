@@ -1,0 +1,19 @@
+[Unit]
+Description=Assistente Mavi
+
+[Service]
+ExecStart=/home/mavi/mavi-assistant/env/bin/python /home/mavi/mavi-assistant/main.py
+
+WorkingDirectory=/home/mavi/mavi-assistant/
+
+Restart=always
+
+User=mavi
+Group=mavi
+
+Environment="PATH=/home/mavi/mavi-assistant/env/bin"
+Environment="VIRTUAL_ENV=/home/mavi/mavi-assistant/env"
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+[Install]
+WantedBy=multi-user.target
