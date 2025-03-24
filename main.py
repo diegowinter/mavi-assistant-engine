@@ -152,7 +152,7 @@ async def text_to_speech_ws_streaming():
     ser = await start_serial_communication()
     if ser is None:
         print("[ERROR] Erro ao inicializar a comunicação serial.")
-        # return
+        return
 
     uri = (
         "wss://datalake-chat-dev.brazilsouth.cloudapp.azure.com"

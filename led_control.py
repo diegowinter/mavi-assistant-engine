@@ -21,6 +21,7 @@ def start_serial_communication_sync():
     except serial.SerialException as e:
         print(f"[ERROR] Erro na comunicação serial: {e}")
         return None
+    
 
 
 async def start_serial_communication():
@@ -36,7 +37,7 @@ async def start_serial_communication():
         )
 
     return ser
-
+    
 
 async def close_serial_communication(ser):
     """
@@ -45,25 +46,25 @@ async def close_serial_communication(ser):
     if 'ser' in locals() and ser.is_open:
         ser.close()
         print("[INFO] Comunicação serial encerrada.")
-
+    
 
 async def turn_listening_led(ser):
     verde = b'RESPIRAR:VERDE\n'
     ser.write(verde)
     print("[INFO] Sinal de microfone ativo (VERDE) enviado.")
-
+    
 
 async def turn_inactivity_led(ser):
     vermelho = b'VERMELHO:50\n'
     ser.write(vermelho)
     print("[INFO] Sinal de inatividade (VERMELHO) enviado.")
-
+    
 
 async def turn_thinking_led(ser):
     vermelho = b'RODAR:VERMELHO:255\n'
     ser.write(vermelho)
     print("[INFO] Sinal de processamento (VERMELHO) enviado.")
-
+    
 
 async def turn_speaking_led(ser):
     """
@@ -76,7 +77,7 @@ async def turn_speaking_led(ser):
         ser.write(command)
         print(f"[INFO] Sinal de microfone ativo (AZUL:{intensity}) enviado.")
         await asyncio.sleep(0.3)  # Aguarda 300ms
-
+    
 
 async def start_led_task(ser):
     """
@@ -84,7 +85,7 @@ async def start_led_task(ser):
     """
     stop_speaking_led.clear()
     return asyncio.create_task(turn_speaking_led(ser))
-
+    
 
 async def stop_led_task(ser):
     """
@@ -92,3 +93,4 @@ async def stop_led_task(ser):
     """
     stop_speaking_led.set()
     await turn_listening_led(ser)
+    

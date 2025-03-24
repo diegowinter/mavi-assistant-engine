@@ -26,7 +26,6 @@ mic_stream = audio.open(
 async def wait_wake_word():
     print("\n[INFO] Aguardando wake word...")
 
-    # 🧠 Reinicializa o modelo a cada chamada
     owwModel = Model(
         wakeword_models=[model_path],
         inference_framework=inference_framework
