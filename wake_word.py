@@ -11,8 +11,8 @@ CHANNELS = 1
 RATE = 16000
 CHUNK = 1024
 
-model_path = "o_la_ma_vee.onnx"
-inference_framework = "onnx"
+model_path = "o_la_ma_vee.tflite"
+inference_framework = "tflite"
 
 audio = pyaudio.PyAudio()
 mic_stream = audio.open(
