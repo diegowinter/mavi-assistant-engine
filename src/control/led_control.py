@@ -21,7 +21,6 @@ def start_serial_communication_sync():
     except serial.SerialException as e:
         print(f"[ERROR] Erro na comunicação serial: {e}")
         return None
-    
 
 
 async def start_serial_communication():
@@ -55,28 +54,37 @@ async def turn_listening_led(ser):
     
 
 async def turn_inactivity_led(ser):
-    vermelho = b'VERMELHO:50\n'
-    ser.write(vermelho)
-    print("[INFO] Sinal de inatividade (VERMELHO) enviado.")
+    ciano = b'CIANO:25\n'
+    ser.write(ciano)
+    print("[INFO] Sinal de inatividade (CIANO) enviado.")
     
 
 async def turn_thinking_led(ser):
-    vermelho = b'RODAR:VERMELHO:255\n'
-    ser.write(vermelho)
-    print("[INFO] Sinal de processamento (VERMELHO) enviado.")
+    amarelo = b'RODAR:AMARELO:255\n'
+    ser.write(amarelo)
+    print("[INFO] Sinal de processamento (AMARELO) enviado.")
+
+
+async def turn_websocket_conn_led(ser):
+    azul = b'AZUL:10\n'
+    ser.write(azul)
+    print("[INFO] Sinal de conexão/desconexão com o WebSocket (AZUL) enviado.")
     
 
 async def turn_speaking_led(ser):
-    """
-    Envia um sinal para o LED de escuta, variando a intensidade aleatoriamente
-    entre 0 e 255.
-    """
+    import random
+    current = random.randint(30, 200)
     while not stop_speaking_led.is_set():
-        intensity = random.randint(0, 255)
-        command = f"AZUL:{intensity}\n".encode()
-        ser.write(command)
-        print(f"[INFO] Sinal de microfone ativo (AZUL:{intensity}) enviado.")
-        await asyncio.sleep(0.3)  # Aguarda 300ms
+        target = random.randint(30, 200)
+        steps = 20
+        delta = (target - current) / steps
+        for _ in range(steps):
+            current += delta
+            command = f"CIANO:{int(current)}\n".encode()
+            ser.write(command)
+            await asyncio.sleep(0.05)
+            if stop_speaking_led.is_set():
+                break
     
 
 async def start_led_task(ser):
