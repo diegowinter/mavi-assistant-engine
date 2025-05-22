@@ -1,9 +1,12 @@
+import os
 import asyncio
 import json
 import websockets
 import pyaudio
+from dotenv import load_dotenv
+load_dotenv()
 
-from led_control import (
+from .control.led_control import (
     start_led_task,
     start_serial_communication,
     stop_led_task,
@@ -11,9 +14,9 @@ from led_control import (
     turn_listening_led,
     turn_thinking_led
 )
-from sound_feedback import play_sound_feedback
-from utils import build_wav_header
-from wake_word import wait_wake_word
+from .audio.sound_feedback import play_sound_feedback
+from .utils.audio_utils import build_wav_header
+from .audio.wake_word import wait_wake_word
 
 
 # Eventos globais
@@ -23,11 +26,15 @@ start_timeout_event  = asyncio.Event()
 cancel_timeout_event = asyncio.Event()
 
 
+SOUND_FEEDBACK_ENABLED = os.getenv("SOUND_FEEDBACK_ENABLED", "False").lower() == "true"
+
+
 async def timeout_handler(websocket, ser):
     """
     Gerencia o timeout, parando a captura ao não receber nenhum evento 
     recognizing do servidor.
     """
+    print("[INFO] Iniciando timer de inatividade.")
     while True:
         await start_timeout_event.wait()
         start_timeout_event.clear(); cancel_timeout_event.clear()
@@ -35,7 +42,8 @@ async def timeout_handler(websocket, ser):
             await asyncio.wait_for(cancel_timeout_event.wait(), timeout=10)
         except asyncio.TimeoutError:
             print("[TIMEOUT] Nenhuma atividade em 10s.")
-            asyncio.create_task(asyncio.to_thread(play_sound_feedback, "timeout"))
+            if SOUND_FEEDBACK_ENABLED:
+                asyncio.create_task(asyncio.to_thread(play_sound_feedback, "timeout"))
             if capture_enabled.is_set():
                 capture_enabled.clear()
                 await turn_websocket_conn_led(ser)
@@ -54,9 +62,13 @@ async def send_audio_chunks(websocket):
     FORMAT = pyaudio.paInt16
     CHUNK  = int(RATE * 0.1)
     pa = pyaudio.PyAudio()
-    stream = pa.open(format=FORMAT, channels=CHANNELS,
-                     rate=RATE, input=True,
-                     frames_per_buffer=CHUNK)
+    stream = pa.open(
+        format=FORMAT,
+        channels=CHANNELS,
+        rate=RATE,
+        input=True,
+        frames_per_buffer=CHUNK
+    )
     first = True
     try:
         while True:
@@ -89,6 +101,7 @@ async def websocket_receiver(websocket, audio_queue, ser):
                     cancel_timeout_event.set()
                 if "recognized" in dj:
                     capture_enabled.clear()
+                    print("[INFO] Parei de ouvir o microfone.")
                     await turn_thinking_led(ser)
                 if "assistant_message" in dj:
                     await audio_queue.put(None)
@@ -111,7 +124,7 @@ async def audio_player(audio_queue, output_stream, ser, capacity_frames):
                 await asyncio.sleep(0.1)
             started = False
             capture_enabled.set()
-            print("[INFO] Volta a ouvir o microfone.")
+            print("[INFO] Voltei a ouvir o microfone.")
             start_timeout_event.set()
             await stop_led_task(ser)
             # Volta a aguardar o próximo None ou chunks futuros
@@ -132,8 +145,6 @@ async def text_to_speech_ws_streaming():
     while True:
         restart_event.clear()
         ser = await start_serial_communication()
-        if ser is None:
-            return
 
         pa = pyaudio.PyAudio()
         output_stream = pa.open(
@@ -146,7 +157,8 @@ async def text_to_speech_ws_streaming():
         capacity = output_stream.get_write_available()
 
         await wait_wake_word(ser)
-        asyncio.create_task(asyncio.to_thread(play_sound_feedback, "wake"))
+        if SOUND_FEEDBACK_ENABLED:
+            asyncio.create_task(asyncio.to_thread(play_sound_feedback, "wake"))
         
         start_timeout_event.set()
         uri = (
@@ -155,6 +167,7 @@ async def text_to_speech_ws_streaming():
             "?doctor_id=205&language=pt-BR&output_format=pcm_44100"
         )
         async with websockets.connect(uri) as ws:
+            print("[INFO] Conectado ao websocket.")
             capture_enabled.set()
             await turn_listening_led(ser)
 

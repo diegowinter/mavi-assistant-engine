@@ -1,9 +1,11 @@
+import os
 import pyaudio
 import numpy as np
 import openwakeword.utils
+from pathlib import Path
 from openwakeword.model import Model
 
-from led_control import (
+from ..control.led_control import (
     turn_inactivity_led,
     turn_websocket_conn_led
 )
@@ -15,11 +17,22 @@ CHANNELS = 1
 RATE = 16000
 CHUNK = 1024
 
-model_path = "o_la_ma_vee.tflite"
-inference_framework = "tflite"
+BASE_DIR = Path(__file__).resolve().parents[2]
+
+oww_framework = os.getenv("OWW_INFERENCE_FRAMEWORK")
+
+if oww_framework == "onnx":
+    model_dir = "onnx"
+    model_file = "o_la_ma_vee.onnx"
+else:
+    model_dir = "tflite"
+    model_file = "o_la_ma_vee.tflite"
+    
+model_path = BASE_DIR / "assets" / "models" / model_dir / model_file
+inference_framework = oww_framework
 
 owwModel = Model(
-    wakeword_models=[model_path],
+    wakeword_models=[str(model_path)],
     inference_framework=inference_framework
 )
 
@@ -34,7 +47,6 @@ async def wait_wake_word(ser):
         input=True,
         frames_per_buffer=CHUNK,
     )
-
     
     owwModel.reset()
     
